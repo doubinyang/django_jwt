@@ -1,0 +1,188 @@
+jwt_payload_handler = api_settings.JWT_PAYLOAD_HANDLER
+jwt_encode_handler = api_settings.JWT_ENCODE_HANDLER
+payload = jwt_payload_handler(user_obj[0])
+rest_framework_jwt\utils.py
+
+def jwt_payload_handler(user):
+    username_field = get_username_field()
+    username = get_username(user)
+
+    warnings.warn(
+        'The following fields will be removed in the future: '
+        '`email` and `user_id`. ',
+        DeprecationWarning
+    )
+
+    payload = {
+        'user_id': user.pk,
+        'username': username,
+        'exp': datetime.utcnow() + api_settings.JWT_EXPIRATION_DELTA
+    }
+    if hasattr(user, 'email'):
+        payload['email'] = user.email
+    if isinstance(user.pk, uuid.UUID):
+        payload['user_id'] = str(user.pk)
+
+    payload[username_field] = username
+
+    # Include original issued at time for a brand new token,
+    # to allow token refresh
+    if api_settings.JWT_ALLOW_REFRESH:
+        payload['orig_iat'] = timegm(
+            datetime.utcnow().utctimetuple()
+        )
+
+    if api_settings.JWT_AUDIENCE is not None:
+        payload['aud'] = api_settings.JWT_AUDIENCE
+
+    if api_settings.JWT_ISSUER is not None:
+        payload['iss'] = api_settings.JWT_ISSUER
+
+    return payload
+
+payload = {
+    'user_id': user.pk,
+    'username': username,
+    'exp': datetime.utcnow() + api_settings.JWT_EXPIRATION_DELTA
+}
+payload默认的三个值,user_id,username,exp过期时间.
+{'user_id': 26, 'username': 'yangbinbin1', 'exp': datetime.datetime(2019, 5, 17, 10, 43, 49, 776555), 
+'email': 'yangbinbin1@globalegrow.com', 'orig_iat': 1558003455}
+得到最终的payload 相关值
+
+token = jwt_encode_handler(payload)
+对payload进行处理,得到一串token的值
+def jwt_encode_handler(payload):
+    key = api_settings.JWT_PRIVATE_KEY or jwt_get_secret_key(payload)
+    return jwt.encode(
+        payload,
+        key,
+        api_settings.JWT_ALGORITHM
+    ).decode('utf-8')
+得到一串非常有用的key值'o&kadvb&*pp65ppb_rl*#=wd69k1sfm&qx2=#h+b=i9=hiktg%'
+class PyJWT(PyJWS):
+    header_type = 'JWT'
+
+    @staticmethod
+    def _get_default_options():
+        # type: () -> Dict[str, bool]
+        return {
+            'verify_signature': True,
+            'verify_exp': True,
+            'verify_nbf': True,
+            'verify_iat': True,
+            'verify_aud': True,
+            'verify_iss': True,
+            'require_exp': False,
+            'require_iat': False,
+            'require_nbf': False
+        }
+
+    def encode(self,
+               payload,  # type: Union[Dict, bytes]
+               key,  # type: str
+               algorithm='HS256',  # type: str
+               headers=None,  # type: Optional[Dict]
+               json_encoder=None  # type: Optional[Callable]
+               ):
+        # Check that we get a mapping
+        if not isinstance(payload, Mapping):
+            raise TypeError('Expecting a mapping object, as JWT only supports '
+                            'JSON objects as payloads.')
+
+        # Payload
+        for time_claim in ['exp', 'iat', 'nbf']:
+            # Convert datetime to a intDate value in known time-format claims
+            if isinstance(payload.get(time_claim), datetime):
+                payload[time_claim] = timegm(payload[time_claim].utctimetuple())  # type: ignore
+
+        json_payload = json.dumps(
+            payload,
+            separators=(',', ':'),
+            cls=json_encoder
+        ).encode('utf-8')
+
+        return super(PyJWT, self).encode(
+            json_payload, key, algorithm, headers, json_encoder
+        )
+return super(PyJWT, self).encode(
+    json_payload, key, algorithm, headers, json_encoder
+)
+这里产生payload数据
+
+class PyJWS(object):
+    header_typ = 'JWT'
+
+    def __init__(self, algorithms=None, options=None):
+        self._algorithms = get_default_algorithms()
+        self._valid_algs = (set(algorithms) if algorithms is not None
+                            else set(self._algorithms))
+
+        # Remove algorithms that aren't on the whitelist
+        for key in list(self._algorithms.keys()):
+            if key not in self._valid_algs:
+                del self._algorithms[key]
+
+        if not options:
+            options = {}
+
+        self.options = merge_dict(self._get_default_options(), options)
+       
+       def encode(self,
+             payload,  # type: Union[Dict, bytes]
+             key,  # type: str
+             algorithm='HS256',  # type: str
+             headers=None,  # type: Optional[Dict]
+             json_encoder=None  # type: Optional[Callable]
+             ):
+      segments = []
+
+      if algorithm is None:
+          algorithm = 'none'
+
+      if algorithm not in self._valid_algs:
+          pass
+
+      # Header
+      header = {'typ': self.header_typ, 'alg': algorithm}
+
+      if headers:
+          self._validate_headers(headers)
+          header.update(headers)
+
+      json_header = force_bytes(
+          json.dumps(
+              header,
+              separators=(',', ':'),
+              cls=json_encoder
+          )
+      )
+
+      segments.append(base64url_encode(json_header))
+      segments.append(base64url_encode(payload))
+
+      # Segments
+      signing_input = b'.'.join(segments)
+      try:
+          alg_obj = self._algorithms[algorithm]
+          key = alg_obj.prepare_key(key)
+          signature = alg_obj.sign(signing_input, key)
+
+      except KeyError:
+          if not has_crypto and algorithm in requires_cryptography:
+              raise NotImplementedError(
+                  "Algorithm '%s' could not be found. Do you have cryptography "
+                  "installed?" % algorithm
+              )
+          else:
+              raise NotImplementedError('Algorithm not supported')
+
+      segments.append(base64url_encode(signature))
+
+      return b'.'.join(segments)
+segments b'\t\xbe\xb8^\xc2\x9c\xaco\n\x9ah\xfaM\xd3\x05\xda\x8e\xa1\x9f\x1c\xd2}\xeb1\xe4Y;\xce\xfa\xd1\xeb%'
+拼装成真正的token.json_header,payload,signature
+return b'.'.join(segments)
+
+然后执行decode('utf-8')
+生产一串token'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyNiwidXNlcm5hbWUiOiJ5YW5nYmluYmluMSIsImV4cCI6MTU1ODA5MzYwMywiZW1haWwiOiJ5YW5nYmluYmluMUBnbG9iYWxlZ3Jvdy5jb20iLCJvcmlnX2lhdCI6MTU1ODAwNzIwM30.Cb64XsKcrG8Kmmj6TdMF2o6hnxzSfesx5Fk7zvrR6yU'
