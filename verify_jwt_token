@@ -1,0 +1,174 @@
+class VerifyJSONWebTokenSerializer(VerificationBaseSerializer):
+    """
+    Check the veracity of an access token.
+    """
+
+    def validate(self, attrs):
+        token = attrs['token']
+
+        payload = self._check_payload(token=token)
+        user = self._check_user(payload=payload)
+
+        return {
+            'token': token,
+            'user': user
+        }
+
+class VerificationBaseSerializer(Serializer):
+    """
+    Abstract serializer used for verifying and refreshing JWTs.
+    """
+    token = serializers.CharField()
+
+    def validate(self, attrs):
+        msg = 'Please define a validate method.'
+        raise NotImplementedError(msg)
+
+    def _check_payload(self, token):
+        # Check payload valid (based off of JSONWebTokenAuthentication,
+        # may want to refactor)
+        try:
+            payload = jwt_decode_handler(token)
+        except jwt.ExpiredSignature:
+            msg = _('Signature has expired.')
+            raise serializers.ValidationError(msg)
+        except jwt.DecodeError:
+            msg = _('Error decoding signature.')
+            raise serializers.ValidationError(msg)
+
+        return payload
+
+def jwt_decode_handler(token):
+    options = {
+        'verify_exp': api_settings.JWT_VERIFY_EXPIRATION,
+    }
+    # get user from token, BEFORE verification, to get user secret key
+    unverified_payload = jwt.decode(token, None, False)
+    secret_key = jwt_get_secret_key(unverified_payload)
+    return jwt.decode(
+        token,
+        api_settings.JWT_PUBLIC_KEY or secret_key,
+        api_settings.JWT_VERIFY,
+        options=options,
+        leeway=api_settings.JWT_LEEWAY,
+        audience=api_settings.JWT_AUDIENCE,
+        issuer=api_settings.JWT_ISSUER,
+        algorithms=[api_settings.JWT_ALGORITHM]
+    )
+
+class PyJWT(PyJWS):
+    header_type = 'JWT'
+    
+    def decode(self,
+           jwt,  # type: str
+           key='',   # type: str
+           verify=True,  # type: bool
+           algorithms=None,  # type: List[str]
+           options=None,  # type: Dict
+           **kwargs):
+
+    if verify and not algorithms:
+        warnings.warn(
+            'It is strongly recommended that you pass in a ' +
+            'value for the "algorithms" argument when calling decode(). ' +
+            'This argument will be mandatory in a future version.',
+            DeprecationWarning
+        )
+
+    payload, _, _, _ = self._load(jwt)
+
+    if options is None:
+        options = {'verify_signature': verify}
+    else:
+        options.setdefault('verify_signature', verify)
+
+    decoded = super(PyJWT, self).decode(
+        jwt, key=key, algorithms=algorithms, options=options, **kwargs
+    )
+
+    try:
+        payload = json.loads(decoded.decode('utf-8'))
+    except ValueError as e:
+        raise DecodeError('Invalid payload string: %s' % e)
+    if not isinstance(payload, Mapping):
+        raise DecodeError('Invalid payload string: must be a json object')
+
+    if verify:
+        merged_options = merge_dict(self.options, options)
+        self._validate_claims(payload, merged_options, **kwargs)
+
+    return payload
+
+
+对token进行逐步解析
+   def _load(self, jwt):
+        if isinstance(jwt, text_type):
+            jwt = jwt.encode('utf-8')
+
+        if not issubclass(type(jwt), binary_type):
+            raise DecodeError("Invalid token type. Token must be a {0}".format(
+                binary_type))
+
+        try:
+            signing_input, crypto_segment = jwt.rsplit(b'.', 1)
+            header_segment, payload_segment = signing_input.split(b'.', 1)
+        except ValueError:
+            raise DecodeError('Not enough segments')
+
+        try:
+            header_data = base64url_decode(header_segment)
+        except (TypeError, binascii.Error):
+            raise DecodeError('Invalid header padding')
+
+        try:
+            header = json.loads(header_data.decode('utf-8'))
+        except ValueError as e:
+            raise DecodeError('Invalid header string: %s' % e)
+
+        if not isinstance(header, Mapping):
+            raise DecodeError('Invalid header string: must be a json object')
+
+        try:
+            payload = base64url_decode(payload_segment)
+        except (TypeError, binascii.Error):
+            raise DecodeError('Invalid payload padding')
+
+        try:
+            signature = base64url_decode(crypto_segment)
+        except (TypeError, binascii.Error):
+            raise DecodeError('Invalid crypto padding')
+
+        return (payload, signing_input, header, signature)
+        
+    def decode(self,
+               jwt,  # type: str
+               key='',   # type: str
+               verify=True,  # type: bool
+               algorithms=None,  # type: List[str]
+               options=None,  # type: Dict
+               **kwargs):
+
+        merged_options = merge_dict(self.options, options)
+        verify_signature = merged_options['verify_signature']
+
+        if verify_signature and not algorithms:
+            warnings.warn(
+                'It is strongly recommended that you pass in a ' +
+                'value for the "algorithms" argument when calling decode(). ' +
+                'This argument will be mandatory in a future version.',
+                DeprecationWarning
+            )
+
+        payload, signing_input, header, signature = self._load(jwt)
+
+        if not verify:
+            warnings.warn('The verify parameter is deprecated. '
+                          'Please use verify_signature in options instead.',
+                          DeprecationWarning, stacklevel=2)
+        elif verify_signature:
+            self._verify_signature(payload, signing_input, header, signature,
+                                   key, algorithms)
+
+        return payload
+
+返回token以及状态码200
